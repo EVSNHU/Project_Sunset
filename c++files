@@ -1,0 +1,1080 @@
+#include "NeonAttributeSet.h"
+#include "GameplayEffectExtension.h"
+
+UNeonAttributeSet::UNeonAttributeSet()
+{
+	InitHealth(100.f);
+	InitMaxHealth(100.f);
+	InitNeon(100.f);
+	InitMaxNeon(100.f);
+	InitStamina(100.f);
+	InitMaxStamina(100.f);
+}
+
+void UNeonAttributeSet::PreAttributeChange(
+	const FGameplayAttribute& Attribute,
+	float& NewValue
+)
+{
+	Super::PreAttributeChange(Attribute, NewValue);
+
+	// Prevent MaxHealth from ever going below 1
+	if (Attribute == GetMaxHealthAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 1.0f);
+	}
+
+	// Prevent MaxNeon from going below 0
+	if (Attribute == GetMaxNeonAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
+	}
+
+	// ADD THIS: Prevent MaxStamina from going below 0
+	if (Attribute == GetMaxStaminaAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
+	}
+}
+
+
+void UNeonAttributeSet::PostGameplayEffectExecute(
+	const FGameplayEffectModCallbackData& Data
+)
+{
+	Super::PostGameplayEffectExecute(Data);
+
+	UE_LOG(LogTemp, Warning, TEXT("PostGameplayEffectExecute called on actor: %s"), *GetOwningActor()->GetName());
+
+	// Handle Health changes
+	if (Data.EvaluatedData.Attribute == GetHealthAttribute())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Health attribute was modified!"));
+		UE_LOG(LogTemp, Warning, TEXT("Magnitude: %.1f (negative = damage)"), Data.EvaluatedData.Magnitude);
+		
+		// Clamp health
+		SetHealth(FMath::Clamp(GetHealth(), 0.0f, GetMaxHealth()));
+		
+		// Check if damage was dealt (negative magnitude = damage)
+		if (Data.EvaluatedData.Magnitude < 0.0f)
+		{
+			float DamageAmount = FMath::Abs(Data.EvaluatedData.Magnitude);
+			
+			UE_LOG(LogTemp, Error, TEXT("=== DAMAGE DETECTED ==="));
+			UE_LOG(LogTemp, Error, TEXT("Damage Amount: %.1f to actor: %s"), DamageAmount, *GetOwningActor()->GetName());
+			UE_LOG(LogTemp, Error, TEXT("Delegate IsBound: %s"), OnDamageTaken.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
+			
+			// Broadcast damage (always try, even if not bound)
+			OnDamageTaken.Broadcast(DamageAmount, GetOwningActor());
+			UE_LOG(LogTemp, Error, TEXT("Broadcast called!"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("Healing detected (positive magnitude): %.1f"), Data.EvaluatedData.Magnitude);
+		}
+	}
+
+	// Clamp Neon
+	if (Data.EvaluatedData.Attribute == GetNeonAttribute())
+	{
+		SetNeon(FMath::Clamp(GetNeon(), 0.0f, GetMaxNeon()));
+	}
+
+	// ADD THIS: Clamp Stamina
+	if (Data.EvaluatedData.Attribute == GetStaminaAttribute())
+	{
+		SetStamina(FMath::Clamp(GetStamina(), 0.0f, GetMaxStamina()));
+		UE_LOG(LogTemp, Log, TEXT("Stamina changed: %.1f / %.1f"), GetStamina(), GetMaxStamina());
+	}
+}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "AttributeSet.h"
+#include "AbilitySystemComponent.h"
+#include "NeonAttributeSet.generated.h"
+
+// GAS helper macros
+#define ATTRIBUTE_ACCESSORS(ClassName, PropertyName) \
+GAMEPLAYATTRIBUTE_PROPERTY_GETTER(ClassName, PropertyName) \
+GAMEPLAYATTRIBUTE_VALUE_GETTER(PropertyName) \
+GAMEPLAYATTRIBUTE_VALUE_SETTER(PropertyName) \
+GAMEPLAYATTRIBUTE_VALUE_INITTER(PropertyName)
+
+// Delegate for broadcasting damage events
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageTaken, float, DamageAmount, AActor*, DamagedActor);
+
+UCLASS()
+class PROJECT_SUNSET_API UNeonAttributeSet : public UAttributeSet
+{
+	GENERATED_BODY()
+
+public:
+	UNeonAttributeSet();
+
+	// Delegate that fires when damage is taken
+	UPROPERTY(BlueprintAssignable, Category = "Attributes")
+	FOnDamageTaken OnDamageTaken;
+
+	// Called just before a Gameplay Effect modifies an attribute
+	virtual void PreAttributeChange(
+		const FGameplayAttribute& Attribute,
+		float& NewValue
+	) override;
+
+	// Called after a Gameplay Effect executes
+	virtual void PostGameplayEffectExecute(
+		const FGameplayEffectModCallbackData& Data
+	) override;
+
+	/* ================= ATTRIBUTES ================= */
+
+	// Health
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData Health;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, Health);
+
+	// Max Health
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData MaxHealth;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, MaxHealth);
+
+	// Neon (Mana / Style Meter)
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData Neon;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, Neon);
+
+	// Max Neon
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData MaxNeon;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, MaxNeon);
+
+	// Stamina
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData Stamina;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, Stamina);
+
+	// Max Stamina 
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData MaxStamina;
+	ATTRIBUTE_ACCESSORS(UNeonAttributeSet, MaxStamina);
+
+	
+};
+// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "NeonDamageExecCalculation.h"
+#include "NeonAttributeSet.h"
+#include "AbilitySystemComponent.h"
+
+// Struct to capture Attributes (Health, Neon, etc.)
+
+struct NeonDamageStatics
+{
+	DECLARE_ATTRIBUTE_CAPTUREDEF(Health);
+
+	NeonDamageStatics()
+	{
+		//Capture the Target's Health (we want to reduce it)
+		// Parameters: (AttributeSet, Attribute, Source/Target,Snapshot?)
+		DEFINE_ATTRIBUTE_CAPTUREDEF(UNeonAttributeSet, Health, Target, false);
+	}
+};
+
+static const NeonDamageStatics& DamageStatics()
+{
+	static NeonDamageStatics DStatics;
+	return DStatics;
+}
+
+// Constructor: Tell the system what attributes we care about
+UNeonDamageExecCalculation::UNeonDamageExecCalculation()
+{
+	RelevantAttributesToCapture.Add(DamageStatics().HealthDef);
+}
+
+
+// Logic Function
+void UNeonDamageExecCalculation::Execute_Implementation(const FGameplayEffectCustomExecutionParameters& ExecutionParams,
+	FGameplayEffectCustomExecutionOutput& OutExecutionOutput) const
+{
+	UAbilitySystemComponent* TargetASC = ExecutionParams.GetTargetAbilitySystemComponent();
+    
+	const FGameplayEffectSpec& Spec = ExecutionParams.GetOwningSpec();
+	FGameplayTagContainer AssetTags;
+	Spec.GetAllAssetTags(AssetTags);
+
+	// 1. Get Tags
+	FGameplayTag StatusCorrupted = FGameplayTag::RequestGameplayTag(FName("Status.Corrupted"));
+	FGameplayTag DamageNeon      = FGameplayTag::RequestGameplayTag(FName("Damage.Type.Neon"));
+	FGameplayTag DataDamage      = FGameplayTag::RequestGameplayTag(FName("Data.Damage")); // New Tag!
+
+	// 2. Check Conditions
+	bool bIsTargetCorrupted = false;
+	if (TargetASC)
+	{
+		bIsTargetCorrupted = TargetASC->HasMatchingGameplayTag(StatusCorrupted);
+	}
+	bool bIsNeonDamage = AssetTags.HasTag(DamageNeon);
+
+	// 3. Get Base Damage (ROBUST METHOD)
+	// We ask: "Did the Blueprint send a number with the tag Data.Damage?"
+	float BaseDamage = Spec.GetSetByCallerMagnitude(DataDamage, false, -1.0f);
+
+	if (BaseDamage == -1.0f)
+	{
+		// Debugging: If this prints, the Blueprint isn't sending the number.
+		BaseDamage = 10.0f; 
+		UE_LOG(LogTemp, Error, TEXT("SynthDamageExec: No Damage Value Found! Defaulting to 10. Check GA_NeonSlash."));
+	}
+
+	// 4. THE COMBO LOGIC
+	if (bIsTargetCorrupted && bIsNeonDamage)
+	{
+		UE_LOG(LogTemp, Warning, TEXT(">>> COMBO TRIGGERED! <<<")); // Visual confirmation
+		BaseDamage *= 2.5f;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Display, TEXT("No Combo. Corrupted: %s | Neon: %s"), 
+			bIsTargetCorrupted ? TEXT("YES") : TEXT("NO"), 
+			bIsNeonDamage ? TEXT("YES") : TEXT("NO"));
+	}
+
+	// 5. Apply Final Damage
+	if (BaseDamage > 0.f)
+	{
+		OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(DamageStatics().HealthProperty, EGameplayModOp::Additive, -BaseDamage));
+	}
+
+	
+}
+
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameplayEffectExecutionCalculation.h"
+#include "NeonDamageExecCalculation.generated.h"
+
+/**
+ * Intercepts damage to Apply Systemic multipliers (Neon + Corruption = Boom)
+ */
+UCLASS()
+class PROJECT_SUNSET_API UNeonDamageExecCalculation : public UGameplayEffectExecutionCalculation
+{
+	GENERATED_BODY()
+
+	public:
+	UNeonDamageExecCalculation();
+
+	virtual void Execute_Implementation(const FGameplayEffectCustomExecutionParameters& ExecutionParams, FGameplayEffectCustomExecutionOutput& OutExecutionOutput) const override;
+	
+};
+
+#include "NeonProjectile.h"
+#include "Components/SphereComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "GameFramework/Character.h"
+
+ANeonProjectile::ANeonProjectile()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    // Collision sphere
+    CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComponent"));
+    CollisionComponent->InitSphereRadius(15.0f);
+    CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    CollisionComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+    CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+    CollisionComponent->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+    CollisionComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+    RootComponent = CollisionComponent;
+
+    // Mesh
+    MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComponent"));
+    MeshComponent->SetupAttachment(RootComponent);
+    MeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // Projectile movement
+    ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
+    ProjectileMovement->UpdatedComponent = CollisionComponent;
+    ProjectileMovement->InitialSpeed = 2000.f;
+    ProjectileMovement->MaxSpeed = 2000.f;
+    ProjectileMovement->bRotationFollowsVelocity = true;
+    ProjectileMovement->ProjectileGravityScale = 0.f;
+    
+    // Lifespan
+    InitialLifeSpan = 10.0f;
+}
+
+void ANeonProjectile::BeginPlay()
+{
+    Super::BeginPlay();
+    
+    CollisionComponent->OnComponentHit.AddDynamic(this, &ANeonProjectile::OnProjectileHit);
+    CollisionComponent->OnComponentBeginOverlap.AddDynamic(this, &ANeonProjectile::OnProjectileOverlap);
+}
+
+void ANeonProjectile::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    if (bIsBoomerang && BoomerangOwner)
+    {
+        if (BoomerangPhase == EProjectilePhase::Outgoing)
+        {
+            // Check distance traveled
+            float DistanceTraveled = FVector::Dist(BoomerangStartLocation, GetActorLocation());
+            
+            if (DistanceTraveled >= MaxTravelDistance)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("=== SCYTHE ENTERING RETURN PHASE (Distance) ==="));
+                BoomerangPhase = EProjectilePhase::Returning;
+                HitActorsThisPhase.Empty();
+                
+                // Enable homing back to owner
+                if (ProjectileMovement)
+                {
+                    ProjectileMovement->bIsHomingProjectile = true;
+                    // FIX: Increased Acceleration to prevent infinite orbit
+                    ProjectileMovement->HomingAccelerationMagnitude = 8000.f;
+                    ProjectileMovement->HomingTargetComponent = BoomerangOwner->GetRootComponent();
+                }
+            }
+        }
+        else if (BoomerangPhase == EProjectilePhase::Returning)
+        {
+            // Check if close enough to owner
+            float DistanceToOwner = FVector::Dist(GetActorLocation(), BoomerangOwner->GetActorLocation());
+            if (DistanceToOwner < 100.f)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Boomerang returned to owner - destroying"));
+                Destroy();
+            }
+        }
+    }
+}
+
+void ANeonProjectile::InitializeBoomerang(AActor* InOwner, float InMaxDistance)
+{
+    UE_LOG(LogTemp, Warning, TEXT("=== InitializeBoomerang called ==="));
+    
+    bIsBoomerang = true;
+    BoomerangOwner = InOwner;
+    MaxTravelDistance = InMaxDistance;
+    BoomerangStartLocation = GetActorLocation();
+    BoomerangPhase = EProjectilePhase::Outgoing;
+    HitActorsThisPhase.Empty();
+    
+    // Ensure straight flight for outgoing phase
+    if (ProjectileMovement)
+    {
+        ProjectileMovement->bIsHomingProjectile = false;
+        ProjectileMovement->HomingAccelerationMagnitude = 0.f;
+        ProjectileMovement->InitialSpeed = 2000.f;
+        ProjectileMovement->MaxSpeed = 2000.f;
+        ProjectileMovement->ProjectileGravityScale = 0.f;
+        
+        UE_LOG(LogTemp, Warning, TEXT("Boomerang configured: MaxDistance=%.0f, Speed=%.0f"), 
+               InMaxDistance, ProjectileMovement->InitialSpeed);
+    }
+}
+
+void ANeonProjectile::OnProjectileHit(UPrimitiveComponent* HitComp, AActor* OtherActor, 
+                                     UPrimitiveComponent* OtherComp, FVector NormalImpulse, 
+                                     const FHitResult& Hit)
+{
+    // We only care about blocking hits in this function. Overlaps are handled elsewhere.
+    if (bIsBoomerang && BoomerangPhase == EProjectilePhase::Outgoing && Hit.bBlockingHit)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Boomerang hit wall/block: %s. Forcing Return."), *OtherActor->GetName());
+
+        BoomerangPhase = EProjectilePhase::Returning;
+        HitActorsThisPhase.Empty();
+
+        if (ProjectileMovement && BoomerangOwner)
+        {
+            ProjectileMovement->bIsHomingProjectile = true;
+            ProjectileMovement->HomingAccelerationMagnitude = 8000.f;
+            ProjectileMovement->HomingTargetComponent = BoomerangOwner->GetRootComponent();
+        }
+    }
+    else if (!bIsBoomerang)
+    {
+        // Handle standard projectile hitting a wall
+        Destroy();
+    }
+}
+
+void ANeonProjectile::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    // Pass the logic to our new shared function
+    HandleCollisionLogic(OtherActor);
+}
+
+void ANeonProjectile::ApplyGameplayEffectToTarget(AActor* TargetActor, TSubclassOf<UGameplayEffect> EffectClass)
+{
+    if (!TargetActor || !EffectClass)
+        return;
+
+    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
+    UAbilitySystemComponent* SourceASC = nullptr;
+
+    if (GetOwner())
+    {
+        SourceASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
+    }
+
+    if (TargetASC)
+    {
+        FGameplayEffectContextHandle EffectContext = TargetASC->MakeEffectContext();
+        EffectContext.AddSourceObject(this);
+
+        if (SourceASC)
+        {
+            EffectContext.AddInstigator(GetOwner(), GetOwner());
+        }
+
+        FGameplayEffectSpecHandle SpecHandle = TargetASC->MakeOutgoingSpec(EffectClass, 1.0f, EffectContext);
+        if (SpecHandle.IsValid())
+        {
+            TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
+        }
+    }
+}
+
+void ANeonProjectile::HandleCollisionLogic(AActor* OtherActor)
+{
+    if (!OtherActor || OtherActor == GetOwner())
+        return;
+        
+    // Standard projectile behavior
+    if (!bIsBoomerang)
+    {
+        if (DamageEffectClass)
+        {
+            ApplyGameplayEffectToTarget(OtherActor, DamageEffectClass);
+        }
+        Destroy();
+        return;
+    }
+
+    // --- Boomerang Logic ---
+
+    // Ignore if we've already hit this actor in this phase
+    if (HitActorsThisPhase.Contains(OtherActor))
+        return;
+
+    // Get target's Ability System Component
+    UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor);
+    if (!TargetASC)
+        return;
+
+    // Track this hit
+    HitActorsThisPhase.Add(OtherActor);
+
+    if (BoomerangPhase == EProjectilePhase::Outgoing)
+    {
+        // Apply Corruption on the way out
+        if (CorruptionEffectClass)
+        {
+            ApplyGameplayEffectToTarget(OtherActor, CorruptionEffectClass);
+            UE_LOG(LogTemp, Warning, TEXT("Boomerang OUTGOING hit: %s - Applied Corruption!"), *OtherActor->GetName());
+        }
+    }
+    else if (BoomerangPhase == EProjectilePhase::Returning)
+    {
+        // Apply Damage on return
+        if (DamageEffectClass)
+        {
+            ApplyGameplayEffectToTarget(OtherActor, DamageEffectClass);
+            UE_LOG(LogTemp, Warning, TEXT("Boomerang RETURNING hit: %s - Applied Damage!"), *OtherActor->GetName());
+        }
+    }
+}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "GameplayTagContainer.h"
+#include "NeonProjectile.generated.h"
+
+// Forward declarations
+class USphereComponent;
+class UProjectileMovementComponent;
+class UStaticMeshComponent;
+class UGameplayEffect;
+
+UENUM(BlueprintType)
+enum class EProjectilePhase : uint8
+{
+    Outgoing UMETA(DisplayName = "Outgoing"),
+    Returning UMETA(DisplayName = "Returning")
+};
+
+UCLASS()
+class PROJECT_SUNSET_API ANeonProjectile : public AActor
+{
+    GENERATED_BODY()
+    
+public:    
+    ANeonProjectile();
+
+    virtual void Tick(float DeltaTime) override;
+
+    // Components
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    USphereComponent* CollisionComponent;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UProjectileMovementComponent* ProjectileMovement;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UStaticMeshComponent* MeshComponent;
+
+    // Gameplay Effects
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gameplay Effects")
+    TSubclassOf<UGameplayEffect> DamageEffectClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gameplay Effects")
+    TSubclassOf<UGameplayEffect> CorruptionEffectClass;
+
+    // Boomerang Settings
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang", Meta = (ExposeOnSpawn = true))
+    bool bIsBoomerang = false;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang")
+    AActor* BoomerangOwner = nullptr;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang")
+    float MaxTravelDistance = 1000.f;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang")
+    FVector BoomerangStartLocation;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang")
+    EProjectilePhase BoomerangPhase = EProjectilePhase::Outgoing;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Boomerang")
+    TSet<AActor*> HitActorsThisPhase;
+
+    UFUNCTION(BlueprintCallable, Category = "Boomerang")
+    void InitializeBoomerang(AActor* InOwner, float InMaxDistance);
+
+protected:
+    virtual void BeginPlay() override;
+
+    UFUNCTION()
+    void OnProjectileHit(UPrimitiveComponent* HitComp, AActor* OtherActor, 
+                        UPrimitiveComponent* OtherComp, FVector NormalImpulse, 
+                        const FHitResult& Hit);
+
+    UFUNCTION()
+    void OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, 
+                             UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, 
+                             bool bFromSweep, const FHitResult & SweepResult);
+
+private:
+    void ApplyGameplayEffectToTarget(AActor* TargetActor, TSubclassOf<UGameplayEffect> EffectClass);
+
+    void HandleCollisionLogic(AActor* OtherActor);
+};
+#include "PlayerCharacter.h"
+#include "Camera/CameraComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/InputComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/SpringArmComponent.h"
+
+APlayerCharacter::APlayerCharacter()
+{
+    PrimaryActorTick.bCanEverTick = true;
+
+    // Camera Setup
+    SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("Spring Arm"));
+    SpringArm->SetupAttachment(RootComponent);
+    SpringArm->TargetArmLength = 300;
+    SpringArm->bUsePawnControlRotation = true;
+    SpringArm->SocketOffset = FVector(0.f, 50.f, 50.f);
+    
+    Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+    Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+    Camera->bUsePawnControlRotation = false;
+
+    // Movement Setup
+    bUseControllerRotationYaw = true;
+    GetCharacterMovement()->bOrientRotationToMovement = false;
+    GetCharacterMovement()->RotationRate = FRotator(0.f, 540.f, 0.f);
+    GetCharacterMovement()->MaxWalkSpeed = 300.f;
+
+    // GAS Setup
+    AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
+    AbilitySystemComponent->SetIsReplicated(true);
+    Attributes = CreateDefaultSubobject<UNeonAttributeSet>(TEXT("Attributes"));
+}
+
+void APlayerCharacter::BeginPlay()
+{
+    Super::BeginPlay();
+
+    UE_LOG(LogTemp, Error, TEXT("=== PlayerCharacter::BeginPlay START for %s ==="), *GetName());
+
+    if (AbilitySystemComponent)
+    {
+        AbilitySystemComponent->InitAbilityActorInfo(this, this);
+
+        if (Attributes)
+        {
+            UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: Attributes found, setting up bindings..."));
+            
+            // Health/Neon UI bindings
+            AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(Attributes->GetHealthAttribute()).AddUObject(this, &APlayerCharacter::OnHealthChangedNative);
+            AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(Attributes->GetNeonAttribute()).AddUObject(this, &APlayerCharacter::OnNeonChangedNative);
+            AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(Attributes->GetStaminaAttribute()).AddUObject(this,&APlayerCharacter::OnStaminaChangedNative);
+            // NEW: Damage delegate binding
+            Attributes->OnDamageTaken.AddDynamic(this, &APlayerCharacter::HandleDamageTaken);
+            UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: BOUND to OnDamageTaken delegate!"));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: ERROR - Attributes is NULL!"));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("PlayerCharacter: ERROR - AbilitySystemComponent is NULL!"));
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("=== PlayerCharacter::BeginPlay COMPLETE ==="));
+}
+
+void APlayerCharacter::InitializeAttributes()
+{
+    // Safety Check: Do we have an Ability System and did we assign the GE?
+    if (AbilitySystemComponent && DefaultAttributeEffect)
+    {
+        // 1. Create a Context (Who is applying this? Us.)
+        FGameplayEffectContextHandle ContextHandle = AbilitySystemComponent->MakeEffectContext();
+        ContextHandle.AddSourceObject(this);
+
+        // 2. Create the "Spec" (The instruction manual for this specific application)
+        FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(DefaultAttributeEffect, 1.0f, ContextHandle);
+
+        // 3. Apply the Effect
+        if (SpecHandle.IsValid())
+        {
+            AbilitySystemComponent->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), AbilitySystemComponent);
+        }
+    }
+}
+
+void APlayerCharacter::OnHealthChangedNative(const FOnAttributeChangeData& Data)
+{
+    float NewValue = Data.NewValue;
+    float MaxValue = AbilitySystemComponent->GetNumericAttribute(Attributes->GetMaxHealthAttribute());
+    OnHealthChanged(NewValue, MaxValue);
+}
+
+void APlayerCharacter::OnNeonChangedNative(const FOnAttributeChangeData& Data)
+{
+    float NewValue = Data.NewValue;
+    float MaxValue = AbilitySystemComponent->GetNumericAttribute(Attributes->GetMaxNeonAttribute());
+    OnNeonChanged(NewValue, MaxValue);
+}
+
+void APlayerCharacter::OnStaminaChangedNative(const FOnAttributeChangeData& Data)
+{
+    float NewValue = Data.NewValue;
+    float MaxValue = AbilitySystemComponent->GetNumericAttribute(Attributes->GetMaxStaminaAttribute());
+    OnStaminaChanged(NewValue, MaxValue);
+}
+
+void APlayerCharacter::HandleDamageTaken(float DamageAmount, AActor* DamagedActor)
+{
+    UE_LOG(LogTemp, Error, TEXT("=== PlayerCharacter::HandleDamageTaken CALLED ==="));
+    UE_LOG(LogTemp, Error, TEXT("DamageAmount: %.1f, DamagedActor: %s, This: %s"), 
+        DamageAmount, 
+        DamagedActor ? *DamagedActor->GetName() : TEXT("NULL"), 
+        *GetName());
+    
+    // Base implementation - do nothing or show player damage too
+}
+
+void APlayerCharacter::PossessedBy(AController* NewController)
+{
+    Super::PossessedBy(NewController);
+
+    if (AbilitySystemComponent)
+    {
+       AbilitySystemComponent->InitAbilityActorInfo(this, this);
+
+        InitializeAttributes();
+    }
+    
+
+    if (APlayerController* PlayerController = Cast<APlayerController>(NewController))
+    {
+       if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
+       {
+          if (DefaultMappingContext)
+          {
+             Subsystem->AddMappingContext(DefaultMappingContext, 0);
+          }
+       }
+    }
+}
+
+void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+    if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+    {
+       if (MoveAction) EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
+       if (LookAction) EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
+       if (SprintAction)
+       {
+          EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
+          EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
+       }
+    }
+}
+
+void APlayerCharacter::Move(const FInputActionValue& Value)
+{
+    FVector2D MovementVector = Value.Get<FVector2D>();
+    if (Controller != nullptr)
+    {
+       const FRotator Rotation = Controller->GetControlRotation();
+       const FRotator YawRotation(0, Rotation.Yaw, 0);
+       const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+       const FVector RightDirection = FRotationMatrix(Rotation).GetUnitAxis(EAxis::Y);
+       AddMovementInput(ForwardDirection, MovementVector.Y);
+       AddMovementInput(RightDirection, MovementVector.X);
+    }
+}
+
+void APlayerCharacter::Look(const FInputActionValue& Value)
+{
+    FVector2D LookAxisVector = Value.Get<FVector2D>();
+    if (Controller != nullptr)
+    {
+       AddControllerYawInput(LookAxisVector.X);
+       AddControllerPitchInput(LookAxisVector.Y);
+    }
+}
+
+void APlayerCharacter::StartSprint()
+{
+    if (GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = 600.f;
+}
+
+void APlayerCharacter::StopSprint()
+{
+    if (GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = 300.f;
+}
+
+UAbilitySystemComponent* APlayerCharacter::GetAbilitySystemComponent() const
+{
+    return AbilitySystemComponent;
+}
+
+void APlayerCharacter::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+}
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "AbilitySystemInterface.h" 
+#include "AbilitySystemComponent.h"
+#include "InputActionValue.h"
+#include "NeonAttributeSet.h"
+#include "GameplayEffectTypes.h"
+#include "PlayerCharacter.generated.h"
+
+class UCameraComponent;
+class USpringArmComponent;
+class UAbilitySystemComponent;
+class UNeonAttributeSet;
+class UInputMappingContext;
+class UInputAction;
+
+UCLASS()
+class PROJECT_SUNSET_API APlayerCharacter : public ACharacter, public IAbilitySystemInterface
+{
+    GENERATED_BODY()
+
+public:
+    APlayerCharacter();
+    
+    // --- Camera ---
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
+    USpringArmComponent* SpringArm;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
+    UCameraComponent* Camera;
+    
+    // --- GAS ---
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    UAbilitySystemComponent* AbilitySystemComponent;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    UNeonAttributeSet* Attributes;
+    
+    // These are the events Blueprint waits for
+    UFUNCTION(BlueprintImplementableEvent, Category = "GAS")
+    void OnHealthChanged(float NewHealth, float MaxHealth);
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "GAS")
+    void OnNeonChanged(float NewNeon, float MaxNeon);
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "GAS")
+    void OnStaminaChanged(float NewStamina, float MaxStamina);
+
+    // --- Movement Functions ---
+    UFUNCTION(BlueprintCallable, Category = "Movement")
+    void StartSprint();
+
+    UFUNCTION(BlueprintCallable, Category = "Movement")
+    void StopSprint();
+
+    // --- Input Assets ---
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+    UInputMappingContext* DefaultMappingContext;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+    UInputAction* JumpAction;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+    UInputAction* MoveAction;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+    UInputAction* LookAction;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+    UInputAction* SprintAction;
+
+    virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+
+protected:
+    virtual void BeginPlay() override;
+    virtual void PossessedBy(AController* NewController) override;
+    virtual void Tick(float DeltaTime) override;
+    virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+
+    void Move(const FInputActionValue& Value);
+    void Look(const FInputActionValue& Value);
+
+    // Variable to assign your GE_InitializeStats in the Blueprint
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GAS")
+    TSubclassOf<class UGameplayEffect> DefaultAttributeEffect;
+
+    // Helper function to apply the effect
+    void InitializeAttributes();
+
+    // Helpers for GAS
+    virtual void OnHealthChangedNative(const FOnAttributeChangeData& Data);
+    virtual void OnNeonChangedNative(const FOnAttributeChangeData& Data);
+    virtual void OnStaminaChangedNative(const FOnAttributeChangeData& Data);
+    
+    // Damage handler - virtual so Enemy can override
+    UFUNCTION()
+    virtual void HandleDamageTaken(float DamageAmount, AActor* DamagedActor);
+};
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+using UnrealBuildTool;
+
+public class Project_Sunset : ModuleRules
+{
+	public Project_Sunset(ReadOnlyTargetRules Target) : base(Target)
+	{
+		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+	
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "GameplayAbilities", "GameplayTags", "GameplayTasks" });
+
+		PrivateDependencyModuleNames.AddRange(new string[] {  });
+
+		// Uncomment if you are using Slate UI
+		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+		
+		// Uncomment if you are using online features
+		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
+
+		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+	}
+}
+
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Project_Sunset.h"
+#include "Modules/ModuleManager.h"
+
+IMPLEMENT_PRIMARY_GAME_MODULE( FDefaultGameModuleImpl, Project_Sunset, "Project_Sunset" );
+
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+
+
+#include "BaseTelegraphAbility.h"
+#include "GameFramework/Character.h"
+
+// Constructor - MUST be defined even if empty
+UBaseTelegraphAbility::UBaseTelegraphAbility() 
+{
+}
+
+void UBaseTelegraphAbility::StartTelegraph(TSubclassOf<AActor> TelegraphClassOverride)
+{
+	// Don't spawn if already active
+	if (ActiveTelegraph) return;
+
+	AActor* Avatar = GetAvatarActorFromActorInfo();
+	TSubclassOf<AActor> ClassToSpawn = TelegraphClassOverride ? TelegraphClassOverride : DefaultTelegraphClass;
+
+	if (Avatar && ClassToSpawn)
+	{
+		FVector SpawnLoc = Avatar->GetActorLocation();
+		SpawnLoc.Z -= 80.0f;
+		SpawnLoc += Avatar->GetActorForwardVector() * TelegraphForwardOffset;
+
+		FRotator SpawnRot = Avatar->GetActorRotation();
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = Avatar;
+
+		ActiveTelegraph = GetWorld()->SpawnActor<AActor>(ClassToSpawn, SpawnLoc, SpawnRot, SpawnParams);
+        
+		if (ActiveTelegraph)
+		{
+			ActiveTelegraph->AttachToComponent(Avatar->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			ActiveTelegraph->SetActorScale3D(TelegraphScale);
+		}
+	}
+}
+
+void UBaseTelegraphAbility::StopTelegraph()
+{
+	if (ActiveTelegraph)
+	{
+		ActiveTelegraph->Destroy();
+		ActiveTelegraph = nullptr;
+	}
+}
+#pragma once
+#include "CoreMinimal.h"
+#include "Abilities/GameplayAbility.h"
+#include "BaseTelegraphAbility.generated.h"
+
+UCLASS()
+class PROJECT_SUNSET_API UBaseTelegraphAbility : public UGameplayAbility
+{
+	GENERATED_BODY()
+
+public:
+	UBaseTelegraphAbility();
+
+	// REMOVED: ActivateAbility/EndAbility overrides (Let Blueprint handle the flow)
+
+protected:
+	// --- TOOLS FOR BLUEPRINT ---
+    
+	// Call this at the start of your Swing/Montage
+	UFUNCTION(BlueprintCallable, Category = "Telegraph")
+	void StartTelegraph(TSubclassOf<AActor> TelegraphClassOverride = nullptr);
+
+	// Call this when the Swing hits or ends
+	UFUNCTION(BlueprintCallable, Category = "Telegraph")
+	void StopTelegraph();
+
+	// --- CONFIG ---
+    
+	UPROPERTY(EditDefaultsOnly, Category = "Telegraph")
+	TSubclassOf<AActor> DefaultTelegraphClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Telegraph")
+	FVector TelegraphScale = FVector(1.0f, 1.0f, 1.0f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "Telegraph")
+	float TelegraphForwardOffset = 100.0f; // Push it forward slightly
+
+private:
+	UPROPERTY()
+	AActor* ActiveTelegraph;
+};
+#include "EnemyCharacter.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "NeonAttributeSet.h"
+#include "AbilitySystemComponent.h"
+
+AEnemyCharacter::AEnemyCharacter()
+{
+	PrimaryActorTick.bCanEverTick = true;
+	GetCharacterMovement()->MaxWalkSpeed = 300.f;
+}
+
+void AEnemyCharacter::BeginPlay()
+{
+	Super::BeginPlay(); // This calls PlayerCharacter::BeginPlay which binds the delegate
+
+	// Just initialize enemy-specific health values
+	if (Attributes)
+	{
+		Attributes->InitHealth(100.0f);
+		Attributes->InitMaxHealth(100.0f);
+		Attributes->InitNeon(0.0f);
+	}
+    
+	UE_LOG(LogTemp, Warning, TEXT("EnemyCharacter BeginPlay complete"));
+}
+
+void AEnemyCharacter::HandleDamageTaken(float DamageAmount, AActor* DamagedActor)
+{
+	// Only process damage for this specific actor
+	if (DamagedActor != this) return;
+    
+	UE_LOG(LogTemp, Error, TEXT("EnemyCharacter: %s took %.1f damage!"), *GetName(), DamageAmount);
+    
+	// Call the Blueprint event
+	DamageEvent(DamageAmount);
+}
+#pragma once
+
+#include "CoreMinimal.h"
+#include "PlayerCharacter.h"
+#include "EnemyCharacter.generated.h"
+
+UCLASS()
+class PROJECT_SUNSET_API AEnemyCharacter : public APlayerCharacter
+{
+	GENERATED_BODY()
+
+public:
+	AEnemyCharacter();
+
+protected:
+	virtual void BeginPlay() override;
+
+	// Blueprint Event - this calls your existing "Damage Event" in Blueprint
+	UFUNCTION(BlueprintImplementableEvent, Category = "Combat")
+	void DamageEvent(float DamageAmount);
+
+	// Override parent's damage handler (NO UFUNCTION here!)
+	virtual void HandleDamageTaken(float DamageAmount, AActor* DamagedActor) override;
+};
