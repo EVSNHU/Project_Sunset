@@ -2,7 +2,8 @@
 
 Action combat system built with Unreal Engine 5's Gameplay Ability System (GAS), demonstrating advanced gameplay programming with C++ and Blueprint integration.
 
-![Gameplay Demo](link-to-video-or-gif)
+![ezgif com-video-to-gif-converter (1)](https://github.com/user-attachments/assets/36ed98a1-6dec-4195-8175-f454a60a90a1)
+
 
 ## Overview
 
@@ -99,7 +100,7 @@ Project Sunset is a portfolio piece showcasing systemic combat design, resource 
 
 ## Contact
 
-Enrique - [LinkedIn](your-linkedin) | [Portfolio](your-site)
+Enrique - [LinkedIn](https://www.linkedin.com/in/evunreal/) | [ItchIO](https://schwiftygg.itch.io) | [Behance](https://www.behance.net/fernandoventura17)
 
 ## Note
 
